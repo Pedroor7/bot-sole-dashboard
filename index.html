@@ -194,6 +194,27 @@
     50% { opacity: 0.3; }
   }
 
+  .logout-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-mut);
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    margin-top: 6px;
+    transition: all 0.2s;
+  }
+
+  .logout-btn:hover {
+    border-color: var(--fluxx-violet);
+    color: var(--fluxx-violet);
+    box-shadow: 0 0 12px var(--violet-glow);
+  }
+
   /* ============================================
      KPI CARDS
      ============================================ */
@@ -796,11 +817,217 @@
     .footer-right { align-items: flex-start; }
     .logo { width: 120px; }
   }
+  /* ============================================
+     LOGIN OVERLAY
+     ============================================ */
+  .login-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .login-overlay::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse 90% 60% at 50% 0%, rgba(108, 99, 255, 0.18), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 50% 100%, rgba(34, 211, 238, 0.1), transparent 60%);
+    pointer-events: none;
+  }
+
+  .login-card {
+    position: relative;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 40px 36px 28px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4), 0 0 60px rgba(108, 99, 255, 0.08);
+  }
+
+  .login-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 24px; right: 24px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--fluxx-violet), transparent);
+    box-shadow: 0 0 12px var(--fluxx-violet);
+  }
+
+  .login-logo {
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: center;
+    filter: drop-shadow(0 0 16px rgba(108, 99, 255, 0.3));
+  }
+
+  .login-logo svg {
+    width: 160px;
+    height: auto;
+  }
+
+  .login-eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fluxx-cyan);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  .login-title {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 22px;
+    text-align: center;
+    color: var(--text);
+    margin-bottom: 28px;
+    letter-spacing: -0.01em;
+  }
+
+  .login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .login-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .login-field label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-mut);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  .login-field input {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 14px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .login-field input:focus {
+    border-color: var(--fluxx-violet);
+    box-shadow: 0 0 0 3px var(--violet-glow);
+  }
+
+  .login-error {
+    color: #FF6B6B;
+    font-size: 12px;
+    min-height: 16px;
+    text-align: center;
+  }
+
+  .login-btn {
+    background: var(--fluxx-violet);
+    color: #FFFFFF;
+    border: none;
+    border-radius: var(--r-md);
+    padding: 13px;
+    font-family: var(--body);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+    margin-top: 4px;
+  }
+
+  .login-btn:hover {
+    background: #5a52e8;
+    box-shadow: 0 8px 24px var(--violet-glow-strong);
+    transform: translateY(-1px);
+  }
+
+  .login-btn:active {
+    transform: translateY(0);
+  }
+
+  .login-footer {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-mut);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+  }
+
+  .login-footer strong {
+    color: var(--fluxx-violet);
+    font-weight: 700;
+  }
 </style>
 </head>
 <body>
 
-<div class="app">
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" aria-label="Fluxx">
+        <defs>
+          <linearGradient id="loginX1" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" style="stop-color:#FFFFFF"/>
+            <stop offset="100%" style="stop-color:#7B6CF6"/>
+          </linearGradient>
+          <linearGradient id="loginX2" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" style="stop-color:#7B6CF6"/>
+            <stop offset="100%" style="stop-color:#4A3FD4"/>
+          </linearGradient>
+        </defs>
+        <text x="48" y="150" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-weight="500" font-size="112" fill="#FFFFFF" letter-spacing="-4">FLU</text>
+        <text x="242" y="150" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-weight="500" font-size="112" fill="url(#loginX1)">X</text>
+        <text x="276" y="150" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-weight="500" font-size="112" fill="url(#loginX2)" opacity="0.88">X</text>
+        <circle cx="412" cy="34" r="7" fill="#22D3EE"/>
+        <circle cx="388" cy="92" r="13" fill="#6C63FF"/>
+        <circle cx="430" cy="152" r="5" fill="#4A4A7A"/>
+        <line x1="412" y1="34" x2="388" y2="92" stroke="#555580" stroke-width="1.2"/>
+        <line x1="388" y1="92" x2="430" y2="152" stroke="#555580" stroke-width="1.2"/>
+        <line x1="412" y1="34" x2="430" y2="152" stroke="#555580" stroke-width="1" opacity="0.6"/>
+      </svg>
+    </div>
+    <div class="login-eyebrow">Dashboard de operaciones</div>
+    <h2 class="login-title">Acceso restringido</h2>
+    <form class="login-form" id="login-form" autocomplete="off">
+      <div class="login-field">
+        <label for="login-user">Usuario</label>
+        <input type="text" id="login-user" autocomplete="username" autofocus>
+      </div>
+      <div class="login-field">
+        <label for="login-pass">Contraseña</label>
+        <input type="password" id="login-pass" autocomplete="current-password">
+      </div>
+      <div class="login-error" id="login-error"></div>
+      <button type="submit" class="login-btn">Ingresar</button>
+    </form>
+    <div class="login-footer">
+      <span>Powered by</span> <strong>FLUXX</strong> <span>· flux.llc</span>
+    </div>
+  </div>
+</div>
+
+<div class="app" id="app-content" style="display:none;">
 
   <!-- HEADER -->
   <header class="header">
@@ -836,6 +1063,7 @@
     <div class="header-meta">
       <div class="live"><span class="dot"></span> en vivo · <span id="last-update">cargando</span></div>
       <div id="datetime"></div>
+      <button class="logout-btn" onclick="logout()" title="Cerrar sesión">cerrar sesión</button>
     </div>
   </header>
 
@@ -964,6 +1192,58 @@
 </div>
 
 <script>
+// ============================================
+// AUTENTICACIÓN (Nivel A — protección básica)
+// ============================================
+const AUTH_USER = 'Espacio Solé';
+const AUTH_PASS = 'Fluxx-Sole';
+const AUTH_KEY = 'fluxx_sole_auth';
+
+function checkAuth() {
+  return sessionStorage.getItem(AUTH_KEY) === 'ok';
+}
+
+function showDashboard() {
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('app-content').style.display = 'block';
+  // Iniciar el dashboard solo después de loguear
+  if (typeof init === 'function') init();
+}
+
+function tryLogin(user, pass) {
+  if (user.trim() === AUTH_USER && pass === AUTH_PASS) {
+    sessionStorage.setItem(AUTH_KEY, 'ok');
+    showDashboard();
+    return true;
+  }
+  return false;
+}
+
+function logout() {
+  sessionStorage.removeItem(AUTH_KEY);
+  location.reload();
+}
+
+document.getElementById('login-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const user = document.getElementById('login-user').value;
+  const pass = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+
+  if (tryLogin(user, pass)) {
+    errEl.textContent = '';
+  } else {
+    errEl.textContent = 'Usuario o contraseña incorrectos';
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login-pass').focus();
+  }
+});
+
+// Si ya estaba logueado, mostrar dashboard directo
+if (checkAuth()) {
+  showDashboard();
+}
+
 // ============================================
 // CONFIG
 // ============================================
@@ -1401,7 +1681,9 @@ function escapeHtml(s) {
 // ============================================
 // GO
 // ============================================
-init();
+// init() solo arranca si el usuario está autenticado.
+// Si no, showDashboard() lo va a llamar después del login exitoso.
+if (checkAuth()) init();
 </script>
 
 </body>
