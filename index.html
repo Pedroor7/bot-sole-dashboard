@@ -1786,8 +1786,14 @@ const SUPABASE_KEY = 'sb_publishable_CaeM1Wf39mlukguZi14R3g_h79RB1Vs';
 
 const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Frase exacta de derivación (desde el system prompt)
-const FRASE_DERIVACION = 'te paso con recepción';
+// Frases exactas de derivación (desde el system prompt).
+// Son DOS: "te paso con recepción" (el cliente espera que lo contacten) y
+// "le aviso a recepción" (aviso interno, ej. leads calientes y ausencias de socios).
+// Las dos disparan la notificación real en n8n, así que las dos cuentan como derivación.
+const FRASES_DERIVACION = ['te paso con recepción', 'le aviso a recepción'];
+const esDerivacion = (m) =>
+  m.role === 'assistant' &&
+  FRASES_DERIVACION.some(f => m.content.toLowerCase().includes(f));
 
 // Directorio de contactos conocidos (número raw → nombre)
 const CONTACTOS = {
@@ -2002,14 +2008,14 @@ function groupByConversations(msgs) {
           messages: [m],
           turns_user: m.role === 'user' ? 1 : 0,
           turns_bot: m.role === 'assistant' ? 1 : 0,
-          has_deriv: m.role === 'assistant' && m.content.toLowerCase().includes(FRASE_DERIVACION)
+          has_deriv: esDerivacion(m)
         };
       } else {
         current.messages.push(m);
         current.last = m.created_at;
         if (m.role === 'user') current.turns_user++;
         else current.turns_bot++;
-        if (m.role === 'assistant' && m.content.toLowerCase().includes(FRASE_DERIVACION)) {
+        if (esDerivacion(m)) {
           current.has_deriv = true;
         }
       }
@@ -2065,9 +2071,7 @@ function renderKPIs() {
   document.getElementById('kpi-avg-msgs').textContent = avg;
 
   // Resolución del bot
-  const derivs = allMessages.filter(m =>
-    m.role === 'assistant' && m.content.toLowerCase().includes(FRASE_DERIVACION)
-  ).length;
+  const derivs = allMessages.filter(esDerivacion).length;
   const resolPct = botMsgs ? (((botMsgs - derivs) / botMsgs) * 100).toFixed(0) : '0';
   document.getElementById('kpi-resol').innerHTML = `${resolPct}<sup>%</sup>`;
   document.getElementById('kpi-deriv').textContent = derivs;
@@ -2199,7 +2203,7 @@ function renderDerivaciones() {
   const derivaciones = [];
   allConvos.forEach(convo => {
     convo.messages.forEach((m, i) => {
-      if (m.role === 'assistant' && m.content.toLowerCase().includes(FRASE_DERIVACION)) {
+      if (esDerivacion(m)) {
         const t = parseTS(m.created_at);
         if (from && t < from) return;
 
@@ -2654,7 +2658,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
   output += `# Contexto: Bot de atención al cliente para gimnasio "Espacio Solé" (Gonnet, Buenos Aires).\n`;
   output += `# El bot se llama "Paula/Ana" y responde consultas sobre horarios, actividades, precios,\n`;
   output += `# y gestiona reservas de clases. Cuando no puede resolver, deriva a recepción con la\n`;
-  output += `# frase "te paso con recepción". "Solé (bot)" = respuestas del bot.\n`;
+  output += `# frases "te paso con recepción" o "le aviso a recepción". "Solé (bot)" = respuestas del bot.\n`;
   output += `# Los nombres de personas son clientes reales del gimnasio.\n`;
   output += `#\n`;
   output += `# Objetivo: Analizar estas conversaciones para identificar respuestas incorrectas,\n`;
@@ -2749,7 +2753,7 @@ function openModal(convo) {
     const role = m.role === 'user' ? 'user' : 'bot';
     const t = parseTS(m.created_at);
     const stamp = t.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    const isDeriv = m.role === 'assistant' && m.content.toLowerCase().includes(FRASE_DERIVACION);
+    const isDeriv = esDerivacion(m);
     return `
       <div class="bubble-row ${role}">
         <div class="bubble ${role} ${isDeriv ? 'deriv' : ''}">${escapeHtml(m.content)}<div class="stamp">${stamp}</div></div>
