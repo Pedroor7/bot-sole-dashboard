@@ -1542,19 +1542,19 @@
       <div class="kpi-detail">de <strong id="kpi-week-detail">—</strong> esta semana</div>
     </div>
     <div class="kpi">
-      <div class="kpi-label">total mensajes</div>
+      <div class="kpi-label">mensajes · 30 días</div>
       <div class="kpi-value" id="kpi-total-msgs">—</div>
       <div class="kpi-detail"><strong id="kpi-user-msgs">—</strong> usuario · <strong id="kpi-bot-msgs">—</strong> bot</div>
     </div>
     <div class="kpi cool">
-      <div class="kpi-label">números únicos</div>
+      <div class="kpi-label">personas · 30 días</div>
       <div class="kpi-value" id="kpi-unique">—</div>
       <div class="kpi-detail"><strong id="kpi-avg-msgs">—</strong> mensajes promedio por persona</div>
     </div>
     <div class="kpi warm">
-      <div class="kpi-label">resolución del bot</div>
+      <div class="kpi-label">resueltas por el bot · 30 días</div>
       <div class="kpi-value" id="kpi-resol">—<sup>%</sup></div>
-      <div class="kpi-detail"><strong id="kpi-deriv">—</strong> derivaciones a recepción</div>
+      <div class="kpi-detail"><strong id="kpi-deriv">—</strong> conversaciones derivadas a recepción</div>
     </div>
   </section>
 
@@ -1591,10 +1591,9 @@
       </div>
       <div class="deriv-filter">
         <select class="filter-select" id="filter-deriv-period" aria-label="Período derivaciones">
-          <option value="week">Esta semana</option>
+          <option value="week">Últimos 7 días</option>
           <option value="today">Hoy</option>
-          <option value="month">Este mes</option>
-          <option value="all">Todas</option>
+          <option value="month">Últimos 30 días</option>
         </select>
       </div>
       <div class="convos-list" id="deriv-list">
@@ -1605,7 +1604,7 @@
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Top consultas</div>
-        <div class="panel-meta">qué preguntan más</div>
+        <div class="panel-meta">qué preguntan · 30 días</div>
       </div>
       <div class="chart-wrap" style="height: 320px;">
         <canvas id="chartTopConsultas"></canvas>
@@ -1652,10 +1651,10 @@
            placeholder="Buscar por número o por contenido del mensaje…"
            aria-label="Buscar conversaciones">
     <select class="filter-select" id="filter-period" aria-label="Filtrar por período">
-      <option value="all">Todo el tiempo</option>
+      <option value="month" selected>Últimos 30 días</option>
       <option value="today">Hoy</option>
-      <option value="week">Esta semana</option>
-      <option value="month">Este mes</option>
+      <option value="week">Últimos 7 días</option>
+      <option value="all">Todo el tiempo</option>
     </select>
     <select class="filter-select" id="filter-deriv" aria-label="Filtrar por derivación">
       <option value="all">Todas</option>
@@ -1775,9 +1774,6 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
   btn.disabled = false;
 });
 
-// Si ya estaba logueado (sesión persistente), mostrar dashboard directo
-checkAuth().then(ok => { if (ok) showDashboard(); });
-
 // ============================================
 // CONFIG
 // ============================================
@@ -1785,6 +1781,10 @@ const SUPABASE_URL = 'https://dskwidhrcrumqqdzncen.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_CaeM1Wf39mlukguZi14R3g_h79RB1Vs';
 
 const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Si ya estaba logueado (sesión persistente), mostrar dashboard directo. Tiene que ir DESPUÉS de crear
+// `supa`: hasta el 25/9 estaba antes, tiraba ReferenceError y había que loguearse en cada visita.
+checkAuth().then(ok => { if (ok) showDashboard(); }).catch(e => console.error('Auth:', e));
 
 // Frases exactas de derivación (desde el system prompt).
 // Son DOS: "te paso con recepción" (el cliente espera que lo contacten) y
@@ -1810,7 +1810,6 @@ let sociosMap = {};
 // Estado global
 let allMessages = [];
 let allConvos = [];
-let allLogs = [];
 let filtered = [];
 let reviewsMap = {};        // { "numero|start": { rating, note } }
 let selectedKeys = new Set(); // keys seleccionadas para export
@@ -1822,16 +1821,32 @@ async function init() {
   updateDateTime();
   setInterval(updateDateTime, 1000);
 
+  // Chart.js mide los nombres de los ejes con la tipografia que haya en ese momento: si Inter
+  // llega despues, dibuja mas ancho y corta la primera letra ("recios / cuota"). Se espera la
+  // fuente, con tope de 1,5 s para no trabar el panel si no carga.
+  await Promise.race([
+    document.fonts.load('12px Inter').catch(() => {}),
+    new Promise(r => setTimeout(r, 1500))
+  ]);
   await loadData();
   await loadReviews();
   renderAll();
 
-  // refresh cada 60s
+  // refresh cada 60s. Con la pestaña oculta no baja nada; si no entró nada nuevo no redibuja
+  // (redibujar la lista completa cada minuto movía el scroll y cortaba lo que estabas mirando).
+  let firma = firmaDatos();
   setInterval(async () => {
+    if (document.hidden) return;
     await loadData();
     await loadReviews();
-    renderAll();
+    const nueva = firmaDatos();
+    if (nueva !== firma) { firma = nueva; renderAll(); }
   }, 60000);
+}
+
+function firmaDatos() {
+  const ultimo = allMessages[allMessages.length - 1];
+  return [allMessages.length, ultimo ? ultimo.created_at : '', JSON.stringify(reviewsMap).length].join('|');
 }
 
 function updateDateTime() {
@@ -1866,6 +1881,7 @@ async function loadData(fullRange = false) {
     let query = supa
       .from('conversaciones')
       .select('*')
+      .not('numero', 'like', '5490000000%') // numeros de prueba del sandbox
       .order('created_at', { ascending: true });
     return desde30 ? query.gte('created_at', desde30) : query;
   });
@@ -1879,16 +1895,6 @@ async function loadData(fullRange = false) {
   allMessages = data || [];
   allConvos = groupByConversations(allMessages);
   if (fullRange) dataFullLoaded = true;
-
-  // Cargar bot_logs
-  const { data: logs, error: logsError } = await traerTodo(() => supa
-    .from('bot_logs')
-    .select('*')
-    .order('created_at', { ascending: false }));
-
-  if (!logsError) {
-    allLogs = logs || [];
-  }
 
   // Cargar socios para mostrar nombres en vez de números
   if (Object.keys(sociosMap).length === 0) {
@@ -2066,24 +2072,26 @@ function renderKPIs() {
   document.getElementById('kpi-today').textContent = todayConvos.length;
   document.getElementById('kpi-week-detail').textContent = weekConvos.length;
 
-  // Total mensajes
-  const userMsgs = allMessages.filter(m => m.role === 'user').length;
-  const botMsgs = allMessages.filter(m => m.role === 'assistant').length;
+  // Todo lo demás, sobre los últimos 30 días (aunque se haya cargado el historial completo)
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+  const msgs30 = allMessages.filter(m => parseTS(m.created_at) >= monthAgo);
+  const convos30 = allConvos.filter(c => parseTS(c.start) >= monthAgo);
+
+  const userMsgs = msgs30.filter(m => m.role === 'user').length;
+  const botMsgs = msgs30.filter(m => m.role === 'assistant').length;
   document.getElementById('kpi-total-msgs').textContent = (userMsgs + botMsgs).toLocaleString('es-AR');
-  document.getElementById('kpi-user-msgs').textContent = userMsgs;
-  document.getElementById('kpi-bot-msgs').textContent = botMsgs;
+  document.getElementById('kpi-user-msgs').textContent = userMsgs.toLocaleString('es-AR');
+  document.getElementById('kpi-bot-msgs').textContent = botMsgs.toLocaleString('es-AR');
 
-  // Únicos
-  const numeros = new Set(allMessages.map(m => m.numero));
+  const numeros = new Set(msgs30.map(m => m.numero));
   document.getElementById('kpi-unique').textContent = numeros.size;
-  const avg = numeros.size ? (allMessages.length / numeros.size).toFixed(1) : '0';
-  document.getElementById('kpi-avg-msgs').textContent = avg;
+  document.getElementById('kpi-avg-msgs').textContent = numeros.size ? (msgs30.length / numeros.size).toFixed(1) : '0';
 
-  // Resolución del bot
-  const derivs = allMessages.filter(esDerivacion).length;
-  const resolPct = botMsgs ? (((botMsgs - derivs) / botMsgs) * 100).toFixed(0) : '0';
+  // Resolución: de cada 100 conversaciones, cuántas cerró el bot sin derivar a recepción
+  const derivadas = convos30.filter(c => c.has_deriv).length;
+  const resolPct = convos30.length ? Math.round(((convos30.length - derivadas) / convos30.length) * 100) : 0;
   document.getElementById('kpi-resol').innerHTML = `${resolPct}<sup>%</sup>`;
-  document.getElementById('kpi-deriv').textContent = derivs;
+  document.getElementById('kpi-deriv').textContent = `${derivadas} de ${convos30.length}`;
 }
 
 function renderTimeStats() {
@@ -2226,6 +2234,7 @@ function renderDerivaciones() {
         }
 
         derivaciones.push({
+          key: `${convo.numero}|${convo.start}`,
           numero: convo.numero,
           pregunta: pregunta,
           respuesta: m.content,
@@ -2254,7 +2263,7 @@ function renderDerivaciones() {
     const respuestaCorta = d.respuesta.length > 120 ? d.respuesta.slice(0, 120) + '...' : d.respuesta;
 
     return `
-      <div class="deriv-item" data-numero="${d.numero}" data-start="${d.created_at}">
+      <div class="deriv-item" data-key="${escapeHtml(d.key)}">
         <div class="deriv-item-header">
           <span class="deriv-numero">${formatNumeroHTML(d.numero)}</span>
           <span class="deriv-time">${timeStr}</span>
@@ -2268,8 +2277,7 @@ function renderDerivaciones() {
   // Click para abrir la conversación completa
   list.querySelectorAll('.deriv-item').forEach(el => {
     el.addEventListener('click', () => {
-      const numero = el.dataset.numero;
-      const convo = allConvos.find(c => c.numero === numero);
+      const convo = allConvos.find(c => `${c.numero}|${c.start}` === el.dataset.key);
       if (convo) openModal(convo);
     });
   });
@@ -2284,23 +2292,28 @@ let chartTopInstance = null;
 function renderTopConsultas() {
   const ctx = document.getElementById('chartTopConsultas').getContext('2d');
 
-  // Contar categorías desde bot_logs
+  // Temas de los mensajes de los clientes, contados por CONVERSACIÓN (una charla que nombra Pilates
+  // tres veces cuenta una). Antes salía de bot_logs.filas_seleccionadas, que el bot dejó de guardar
+  // cuando pasó a mandar la KB completa (último dato: 26/5), y el panel quedó vacío.
+  const TEMAS = [
+    ['Precios / cuota', /precio|cu[aá]nto (sale|cuesta|es|est[aá])|valor|cuota|abono|tarifa/i],
+    ['Natación', /nataci|pileta|nadar|aquagym/i],
+    ['Horarios', /horario|a qu[eé] hora|qu[eé] d[ií]as/i],
+    ['Reservas', /anot|reserv|inscrib|hay lugar|cupo/i],
+    ['Musculación', /muscula|pesas|\bgym\b/i],
+    ['Pilates', /pilates/i],
+    ['Cumpleaños', /cumple/i],
+    ['Clases grupales', /spinning|yoga|zumba|funcional|stretching|\bgap\b|telas|salsa|boxeo|surf/i],
+    ['Kinesio / rehab', /kinesio|rehab|recuperaci[oó]n/i],
+    ['Bajas y cambios', /\bbaja\b|cambiar(me)? de|pasar(me)? al/i],
+  ];
+  const monthAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const conteo = {};
-  const excluir = ['info_general', 'horarios_complejo']; // filas core, no informativas
-
-  allLogs.forEach(log => {
-    if (!log.filas_seleccionadas) return;
-    try {
-      const filas = JSON.parse(log.filas_seleccionadas);
-      filas.forEach(f => {
-        if (!excluir.includes(f)) {
-          conteo[f] = (conteo[f] || 0) + 1;
-        }
-      });
-    } catch(e) {}
+  allConvos.filter(c => parseTS(c.start) >= monthAgo).forEach(c => {
+    const texto = c.messages.filter(m => m.role === 'user').map(m => m.content).join(' \n ');
+    TEMAS.forEach(([nombre, re]) => { if (re.test(texto)) conteo[nombre] = (conteo[nombre] || 0) + 1; });
   });
 
-  // Ordenar y tomar top 8
   const sorted = Object.entries(conteo)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8);
@@ -2311,81 +2324,11 @@ function renderTopConsultas() {
     ctx.fillStyle = 'rgba(240, 239, 255, 0.35)';
     ctx.font = '12px "JetBrains Mono"';
     ctx.textAlign = 'center';
-    ctx.fillText('Aún no hay datos suficientes', ctx.canvas.width / 2, ctx.canvas.height / 2);
+    ctx.fillText('Sin conversaciones en los últimos 30 días', ctx.canvas.width / 2, ctx.canvas.height / 2);
     return;
   }
 
-  // Nombres legibles
-  const nombresBonitos = {
-    // Clases y actividades
-    'spinning': 'Spinning',
-    'yoga': 'Yoga',
-    'pilates': 'Pilates',
-    'funcional': 'Funcional',
-    'tai_chi': 'Tai Chi',
-    'stretching_gap': 'Stretching / GAP',
-    'stretching': 'Stretching',
-    'gap': 'GAP',
-    'zumba_salsa': 'Zumba / Salsa',
-    'zumba': 'Zumba',
-    'salsa': 'Salsa',
-    'localizada_purebody': 'Localizada / Pure Body',
-    'telas_aereas': 'Telas aéreas',
-    'telas': 'Telas aéreas',
-    'taekwondo_kempo': 'Taekwondo',
-    'taekwondo': 'Taekwondo',
-    'categorias_generales': 'Clases (general)',
-    'con_reserva': 'Clases con reserva',
-    // Musculación
-    'musculacion': 'Musculación (precio)',
-    'musculacion_funcionamiento': 'Musculación (info)',
-    'musculacion_precio': 'Musculación (precio)',
-    // Natación
-    'info_general': 'Natación (general)',
-    'adultos': 'Natación adultos',
-    'pileta_libre': 'Pileta libre',
-    'centro_entrenamiento': 'Centro de entrenamiento',
-    'ninos_3_anios': 'Natación 3 años',
-    'ninos_4_5': 'Natación 4-5 años',
-    'ninos_6_12': 'Natación 6-12 años',
-    'adolescentes': 'Natación adolescentes',
-    'aquagym': 'Aquagym',
-    'rehab_pileta': 'Recuperación acuática',
-    'surf': 'Surf',
-    'natacion_precios': 'Natación (precios)',
-    // Precios
-    'premium': 'Plan Premium',
-    'dia_suelto': 'Día suelto',
-    'matricula': 'Matrícula',
-    'vigencia_cuotas': 'Vigencia cuotas',
-    'clase_prueba': 'Clase de prueba',
-    'descuento_familiar': 'Descuento familiar',
-    'actividades_sueltas': 'Actividades sueltas',
-    'funcional_precio': 'Funcional (precio)',
-    'precio_planes': 'Precios planes',
-    // Rehabilitación
-    'kinesiologia_info': 'Kinesiología',
-    'cardiovascular_info': 'Rehab cardiovascular',
-    'entrenamiento_adaptado': 'Entrenamiento adaptado',
-    // Contacto e instalaciones
-    'telefono': 'Teléfono / contacto',
-    'redes': 'Redes sociales',
-    'estacionamiento': 'Estacionamiento',
-    'accesibilidad': 'Accesibilidad',
-    'general': 'Info general',
-    // FAQ
-    'empezar_cuando': 'Cuándo empezar',
-    'cumpleanios': 'Cumpleaños',
-    'grupos_especiales': 'Grupos especiales',
-    'duracion_clases': 'Duración clases',
-    'edad_musculacion': 'Edad mínima',
-    'cuota_renovacion': 'Cuota / renovación',
-    'recuperar_clases': 'Recuperar clases',
-    'pileta_requisitos': 'Pileta requisitos',
-    'feriados': 'Feriados',
-  };
-
-  const labels = sorted.map(([k]) => nombresBonitos[k] || k.replace(/_/g, ' '));
+  const labels = sorted.map(([k]) => k);
   const values = sorted.map(([, v]) => v);
 
   const colores = [
@@ -2429,7 +2372,7 @@ function renderTopConsultas() {
           titleFont: { family: 'Inter', weight: '600', size: 13 },
           bodyFont: { family: 'JetBrains Mono', size: 11 },
           callbacks: {
-            label: (ctx) => ` ${ctx.raw} consultas`
+            label: (ctx) => ` ${ctx.raw} conversaciones`
           }
         }
       },
@@ -2665,7 +2608,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
   output += `# Total: ${convos.length} conversaciones\n`;
   output += `#\n`;
   output += `# Contexto: Bot de atención al cliente para gimnasio "Espacio Solé" (Gonnet, Buenos Aires).\n`;
-  output += `# El bot se llama "Paula/Ana" y responde consultas sobre horarios, actividades, precios,\n`;
+  output += `# El bot se presenta como Ana, Paula o Rocío (al azar) y responde consultas sobre horarios, actividades, precios,\n`;
   output += `# y gestiona reservas de clases. Cuando no puede resolver, deriva a recepción con la\n`;
   output += `# frases "te paso con recepción" o "le aviso a recepción". "Solé (bot)" = respuestas del bot.\n`;
   output += `# Los nombres de personas son clientes reales del gimnasio.\n`;
