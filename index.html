@@ -1846,18 +1846,29 @@ function updateDateTime() {
 // ============================================
 let dataFullLoaded = false;
 
-async function loadData(fullRange = false) {
-  let query = supa
-    .from('conversaciones')
-    .select('*')
-    .order('created_at', { ascending: true });
-
-  if (!fullRange && !dataFullLoaded) {
-    const desde = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    query = query.gte('created_at', desde);
+// Supabase devuelve como maximo 1000 filas por pedido. Sin paginar, el dashboard mostraba "1.000 mensajes"
+// clavado, se quedaba con los mas VIEJOS del mes y decia "hoy: 0" (25/9: 1.220 mensajes en 30 dias,
+// 1.943 bot_logs, 2.463 socios activos). armar() tiene que devolver una query nueva en cada llamada.
+async function traerTodo(armar) {
+  const PAGINA = 1000;
+  let filas = [];
+  for (let desde = 0; ; desde += PAGINA) {
+    const { data, error } = await armar().range(desde, desde + PAGINA - 1);
+    if (error) return { data: null, error };
+    filas = filas.concat(data || []);
+    if (!data || data.length < PAGINA) return { data: filas, error: null };
   }
+}
 
-  const { data, error } = await query;
+async function loadData(fullRange = false) {
+  const desde30 = (!fullRange && !dataFullLoaded) ? new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() : null;
+  const { data, error } = await traerTodo(() => {
+    let query = supa
+      .from('conversaciones')
+      .select('*')
+      .order('created_at', { ascending: true });
+    return desde30 ? query.gte('created_at', desde30) : query;
+  });
 
   if (error) {
     console.error('Error:', error);
@@ -1870,10 +1881,10 @@ async function loadData(fullRange = false) {
   if (fullRange) dataFullLoaded = true;
 
   // Cargar bot_logs
-  const { data: logs, error: logsError } = await supa
+  const { data: logs, error: logsError } = await traerTodo(() => supa
     .from('bot_logs')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }));
 
   if (!logsError) {
     allLogs = logs || [];
@@ -1882,10 +1893,11 @@ async function loadData(fullRange = false) {
   // Cargar socios para mostrar nombres en vez de números
   if (Object.keys(sociosMap).length === 0) {
     try {
-      const { data: socios } = await supa.schema('app')
+      const { data: socios } = await traerTodo(() => supa.schema('app')
         .from('socios')
         .select('celular, apellido_nombre')
-        .eq('activo', true);
+        .eq('activo', true)
+        .order('celular'));
       if (socios) {
         socios.forEach(s => {
           if (s.celular) sociosMap[s.celular] = s.apellido_nombre;
