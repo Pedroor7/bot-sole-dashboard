@@ -2146,21 +2146,24 @@ function renderChart() {
   const dataUser = [];
   const dataBot = [];
 
+  // Conteo por dia (fecha local YYYY-MM-DD) en una sola pasada. Antes se recorrian todos los mensajes
+  // 28 veces (14 dias x 2 roles) y era lo mas lento de cada redibujo.
+  const porDia = {};
+  allMessages.forEach(m => {
+    const md = parseTS(m.created_at);
+    const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
+    const dia = porDia[mds] || (porDia[mds] = { user: 0, assistant: 0 });
+    if (m.role === 'user') dia.user++;
+    else if (m.role === 'assistant') dia.assistant++;
+  });
+
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 24 * 3600 * 1000);
     // Fecha local YYYY-MM-DD
     const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     labels.push(d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' }));
-    dataUser.push(allMessages.filter(m => {
-      const md = parseTS(m.created_at);
-      const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
-      return mds === ds && m.role === 'user';
-    }).length);
-    dataBot.push(allMessages.filter(m => {
-      const md = parseTS(m.created_at);
-      const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
-      return mds === ds && m.role === 'assistant';
-    }).length);
+    dataUser.push(porDia[ds] ? porDia[ds].user : 0);
+    dataBot.push(porDia[ds] ? porDia[ds].assistant : 0);
   }
 
   if (chartInstance) chartInstance.destroy();
