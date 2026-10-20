@@ -1881,7 +1881,7 @@ async function loadData(fullRange = false) {
   const { data, error } = await traerTodo(() => {
     let query = supa
       .from('conversaciones')
-      .select('*')
+      .select('id, numero, role, content, created_at') // solo lo que se usa: message_id pesaba ~20% de la descarga
       .not('numero', 'like', '5490000000%') // numeros de prueba del sandbox
       .order('created_at', { ascending: true });
     return desde30 ? query.gte('created_at', desde30) : query;
