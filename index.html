@@ -1829,8 +1829,7 @@ async function init() {
     document.fonts.load('12px Inter').catch(() => {}),
     new Promise(r => setTimeout(r, 1500))
   ]);
-  await loadData();
-  await loadReviews();
+  await Promise.all([loadData(), loadReviews()]); // a la vez: antes las reseñas esperaban a los mensajes
   renderAll();
 
   // refresh cada 60s. Con la pestaña oculta no baja nada; si no entró nada nuevo no redibuja
@@ -1838,8 +1837,7 @@ async function init() {
   let firma = firmaDatos();
   setInterval(async () => {
     if (document.hidden) return;
-    await loadData();
-    await loadReviews();
+    await Promise.all([loadData(), loadReviews()]);
     const nueva = firmaDatos();
     if (nueva !== firma) { firma = nueva; renderAll(); }
   }, 60000);
@@ -1864,24 +1862,52 @@ let dataFullLoaded = false;
 
 // Supabase devuelve como maximo 1000 filas por pedido. Sin paginar, el dashboard mostraba "1.000 mensajes"
 // clavado, se quedaba con los mas VIEJOS del mes y decia "hoy: 0" (25/9: 1.220 mensajes en 30 dias,
-// 1.943 bot_logs, 2.463 socios activos). armar() tiene que devolver una query nueva en cada llamada.
+// 1.943 bot_logs, 2.463 socios activos). armar(opciones) tiene que devolver una query nueva en cada llamada
+// y pasarle las opciones a select() (ahi va el pedido del total).
+// La primera pagina trae tambien el total; con eso el resto se pide todo junto. Antes iban de a una y cada
+// pagina era un viaje de ida y vuelta a Supabase (~0,4 s desde Buenos Aires).
 async function traerTodo(armar) {
   const PAGINA = 1000;
-  let filas = [];
-  for (let desde = 0; ; desde += PAGINA) {
+  const primera = await armar({ count: 'exact' }).range(0, PAGINA - 1);
+  if (primera.error) return { data: null, error: primera.error };
+  let filas = primera.data || [];
+  let ultima = filas;
+  const pedidos = [];
+  for (let desde = PAGINA; ultima.length === PAGINA && desde < (primera.count || 0); desde += PAGINA) {
+    pedidos.push(armar().range(desde, desde + PAGINA - 1));
+  }
+  for (const { data, error } of await Promise.all(pedidos)) {
+    if (error) return { data: null, error };
+    filas = filas.concat(data || []);
+    ultima = data || [];
+  }
+  // Si entraron filas mientras tanto y la ultima pagina vino llena, seguir de a una como antes
+  for (let desde = PAGINA * (pedidos.length + 1); ultima.length === PAGINA; desde += PAGINA) {
     const { data, error } = await armar().range(desde, desde + PAGINA - 1);
     if (error) return { data: null, error };
     filas = filas.concat(data || []);
-    if (!data || data.length < PAGINA) return { data: filas, error: null };
+    ultima = data || [];
   }
+  return { data: filas, error: null };
 }
 
 async function loadData(fullRange = false) {
   const desde30 = (!fullRange && !dataFullLoaded) ? new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() : null;
-  const { data, error } = await traerTodo(() => {
+  // Los socios (para mostrar nombres) se piden a la vez que los mensajes; antes esperaban a que terminaran
+  const pedidoSocios = Object.keys(sociosMap).length === 0 ? (async () => {
+    try {
+      return await traerTodo((opc) => supa.schema('app')
+        .from('socios')
+        .select('celular, apellido_nombre', opc)
+        .eq('activo', true)
+        .order('celular'));
+    } catch (e) { return { data: null }; } // schema app no accesible, usamos solo CONTACTOS
+  })() : null;
+
+  const { data, error } = await traerTodo((opc) => {
     let query = supa
       .from('conversaciones')
-      .select('id, numero, role, content, created_at') // solo lo que se usa: message_id pesaba ~20% de la descarga
+      .select('id, numero, role, content, created_at', opc) // solo lo que se usa: message_id pesaba ~20% de la descarga
       .not('numero', 'like', '5490000000%') // numeros de prueba del sandbox
       .order('created_at', { ascending: true });
     return desde30 ? query.gte('created_at', desde30) : query;
@@ -1897,20 +1923,14 @@ async function loadData(fullRange = false) {
   allConvos = groupByConversations(allMessages);
   if (fullRange) dataFullLoaded = true;
 
-  // Cargar socios para mostrar nombres en vez de números
-  if (Object.keys(sociosMap).length === 0) {
-    try {
-      const { data: socios } = await traerTodo(() => supa.schema('app')
-        .from('socios')
-        .select('celular, apellido_nombre')
-        .eq('activo', true)
-        .order('celular'));
-      if (socios) {
-        socios.forEach(s => {
-          if (s.celular) sociosMap[s.celular] = s.apellido_nombre;
-        });
-      }
-    } catch(e) { /* schema app no accesible, usamos solo CONTACTOS */ }
+  // Socios para mostrar nombres en vez de números
+  if (pedidoSocios) {
+    const { data: socios } = await pedidoSocios;
+    if (socios) {
+      socios.forEach(s => {
+        if (s.celular) sociosMap[s.celular] = s.apellido_nombre;
+      });
+    }
   }
 }
 
