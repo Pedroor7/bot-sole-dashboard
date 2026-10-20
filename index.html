@@ -1837,7 +1837,7 @@ async function init() {
   let firma = firmaDatos();
   setInterval(async () => {
     if (document.hidden) return;
-    await Promise.all([loadData(), loadReviews()]);
+    await Promise.all([refrescarMensajes(), loadReviews()]);
     const nueva = firmaDatos();
     if (nueva !== firma) { firma = nueva; renderAll(); }
   }, 60000);
@@ -1932,6 +1932,42 @@ async function loadData(fullRange = false) {
       });
     }
   }
+}
+
+// Refresco liviano: en vez de volver a bajar los 30 dias (o todo el historial) cada minuto, trae solo
+// los mensajes desde el ultimo que hay (con 5 min de solape por si alguno se guardo tarde) y, a la vez,
+// cuantos mensajes hay en total. Si despues de sumar los nuevos el total no coincide (se borro algo o se
+// escapo uno), recarga todo como antes. Asi lo que se ve es siempre igual a una carga completa.
+async function refrescarMensajes() {
+  const ultimo = allMessages[allMessages.length - 1];
+  if (!ultimo) return loadData();
+  const desde30 = dataFullLoaded ? null : new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const desdeNuevos = new Date(parseTS(ultimo.created_at).getTime() - 5 * 60 * 1000).toISOString();
+  const armar = (opc) => {
+    const query = supa
+      .from('conversaciones')
+      .select('id, numero, role, content, created_at', opc)
+      .not('numero', 'like', '5490000000%'); // numeros de prueba del sandbox
+    return desde30 ? query.gte('created_at', desde30) : query;
+  };
+  const [nuevos, total] = await Promise.all([
+    traerTodo((opc) => armar(opc).gte('created_at', desdeNuevos).order('created_at', { ascending: true })),
+    armar({ count: 'exact', head: true })
+  ]);
+  if (nuevos.error || total.error || total.count == null) return loadData();
+
+  const vistos = new Set(allMessages.map(m => m.id));
+  const agregados = nuevos.data.filter(m => !vistos.has(m.id));
+  let msgs = allMessages.concat(agregados);
+  if (desde30) { // la ventana de 30 dias se corre: sacar lo que quedo afuera
+    const limite = new Date(desde30);
+    msgs = msgs.filter(m => parseTS(m.created_at) >= limite);
+  }
+  if (msgs.length !== total.count) return loadData();
+  if (msgs.length === allMessages.length && !agregados.length) return; // nada cambio
+  if (agregados.length) msgs.sort((a, b) => parseTS(a.created_at) - parseTS(b.created_at));
+  allMessages = msgs;
+  allConvos = groupByConversations(allMessages);
 }
 
 // ============================================
