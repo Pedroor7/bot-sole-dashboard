@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Version exacta: "@2" baja la ultima 2.x sin aviso y el navegador la guarda solo 7 dias; fija, 1 año. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <style>
   /* ============================================
@@ -1828,8 +1829,7 @@ async function init() {
     document.fonts.load('12px Inter').catch(() => {}),
     new Promise(r => setTimeout(r, 1500))
   ]);
-  await loadData();
-  await loadReviews();
+  await Promise.all([loadData(), loadReviews()]); // a la vez: antes las reseñas esperaban a los mensajes
   renderAll();
 
   // refresh cada 60s. Con la pestaña oculta no baja nada; si no entró nada nuevo no redibuja
@@ -1837,8 +1837,7 @@ async function init() {
   let firma = firmaDatos();
   setInterval(async () => {
     if (document.hidden) return;
-    await loadData();
-    await loadReviews();
+    await Promise.all([refrescarMensajes(), loadReviews()]);
     const nueva = firmaDatos();
     if (nueva !== firma) { firma = nueva; renderAll(); }
   }, 60000);
@@ -1863,24 +1862,52 @@ let dataFullLoaded = false;
 
 // Supabase devuelve como maximo 1000 filas por pedido. Sin paginar, el dashboard mostraba "1.000 mensajes"
 // clavado, se quedaba con los mas VIEJOS del mes y decia "hoy: 0" (25/9: 1.220 mensajes en 30 dias,
-// 1.943 bot_logs, 2.463 socios activos). armar() tiene que devolver una query nueva en cada llamada.
+// 1.943 bot_logs, 2.463 socios activos). armar(opciones) tiene que devolver una query nueva en cada llamada
+// y pasarle las opciones a select() (ahi va el pedido del total).
+// La primera pagina trae tambien el total; con eso el resto se pide todo junto. Antes iban de a una y cada
+// pagina era un viaje de ida y vuelta a Supabase (~0,4 s desde Buenos Aires).
 async function traerTodo(armar) {
   const PAGINA = 1000;
-  let filas = [];
-  for (let desde = 0; ; desde += PAGINA) {
+  const primera = await armar({ count: 'exact' }).range(0, PAGINA - 1);
+  if (primera.error) return { data: null, error: primera.error };
+  let filas = primera.data || [];
+  let ultima = filas;
+  const pedidos = [];
+  for (let desde = PAGINA; ultima.length === PAGINA && desde < (primera.count || 0); desde += PAGINA) {
+    pedidos.push(armar().range(desde, desde + PAGINA - 1));
+  }
+  for (const { data, error } of await Promise.all(pedidos)) {
+    if (error) return { data: null, error };
+    filas = filas.concat(data || []);
+    ultima = data || [];
+  }
+  // Si entraron filas mientras tanto y la ultima pagina vino llena, seguir de a una como antes
+  for (let desde = PAGINA * (pedidos.length + 1); ultima.length === PAGINA; desde += PAGINA) {
     const { data, error } = await armar().range(desde, desde + PAGINA - 1);
     if (error) return { data: null, error };
     filas = filas.concat(data || []);
-    if (!data || data.length < PAGINA) return { data: filas, error: null };
+    ultima = data || [];
   }
+  return { data: filas, error: null };
 }
 
 async function loadData(fullRange = false) {
   const desde30 = (!fullRange && !dataFullLoaded) ? new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() : null;
-  const { data, error } = await traerTodo(() => {
+  // Los socios (para mostrar nombres) se piden a la vez que los mensajes; antes esperaban a que terminaran
+  const pedidoSocios = Object.keys(sociosMap).length === 0 ? (async () => {
+    try {
+      return await traerTodo((opc) => supa.schema('app')
+        .from('socios')
+        .select('celular, apellido_nombre', opc)
+        .eq('activo', true)
+        .order('celular'));
+    } catch (e) { return { data: null }; } // schema app no accesible, usamos solo CONTACTOS
+  })() : null;
+
+  const { data, error } = await traerTodo((opc) => {
     let query = supa
       .from('conversaciones')
-      .select('*')
+      .select('id, numero, role, content, created_at', opc) // solo lo que se usa: message_id pesaba ~20% de la descarga
       .not('numero', 'like', '5490000000%') // numeros de prueba del sandbox
       .order('created_at', { ascending: true });
     return desde30 ? query.gte('created_at', desde30) : query;
@@ -1896,21 +1923,51 @@ async function loadData(fullRange = false) {
   allConvos = groupByConversations(allMessages);
   if (fullRange) dataFullLoaded = true;
 
-  // Cargar socios para mostrar nombres en vez de números
-  if (Object.keys(sociosMap).length === 0) {
-    try {
-      const { data: socios } = await traerTodo(() => supa.schema('app')
-        .from('socios')
-        .select('celular, apellido_nombre')
-        .eq('activo', true)
-        .order('celular'));
-      if (socios) {
-        socios.forEach(s => {
-          if (s.celular) sociosMap[s.celular] = s.apellido_nombre;
-        });
-      }
-    } catch(e) { /* schema app no accesible, usamos solo CONTACTOS */ }
+  // Socios para mostrar nombres en vez de números
+  if (pedidoSocios) {
+    const { data: socios } = await pedidoSocios;
+    if (socios) {
+      socios.forEach(s => {
+        if (s.celular) sociosMap[s.celular] = s.apellido_nombre;
+      });
+    }
   }
+}
+
+// Refresco liviano: en vez de volver a bajar los 30 dias (o todo el historial) cada minuto, trae solo
+// los mensajes desde el ultimo que hay (con 5 min de solape por si alguno se guardo tarde) y, a la vez,
+// cuantos mensajes hay en total. Si despues de sumar los nuevos el total no coincide (se borro algo o se
+// escapo uno), recarga todo como antes. Asi lo que se ve es siempre igual a una carga completa.
+async function refrescarMensajes() {
+  const ultimo = allMessages[allMessages.length - 1];
+  if (!ultimo) return loadData();
+  const desde30 = dataFullLoaded ? null : new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const desdeNuevos = new Date(parseTS(ultimo.created_at).getTime() - 5 * 60 * 1000).toISOString();
+  const armar = (opc) => {
+    const query = supa
+      .from('conversaciones')
+      .select('id, numero, role, content, created_at', opc)
+      .not('numero', 'like', '5490000000%'); // numeros de prueba del sandbox
+    return desde30 ? query.gte('created_at', desde30) : query;
+  };
+  const [nuevos, total] = await Promise.all([
+    traerTodo((opc) => armar(opc).gte('created_at', desdeNuevos).order('created_at', { ascending: true })),
+    armar({ count: 'exact', head: true })
+  ]);
+  if (nuevos.error || total.error || total.count == null) return loadData();
+
+  const vistos = new Set(allMessages.map(m => m.id));
+  const agregados = nuevos.data.filter(m => !vistos.has(m.id));
+  let msgs = allMessages.concat(agregados);
+  if (desde30) { // la ventana de 30 dias se corre: sacar lo que quedo afuera
+    const limite = new Date(desde30);
+    msgs = msgs.filter(m => parseTS(m.created_at) >= limite);
+  }
+  if (msgs.length !== total.count) return loadData();
+  if (msgs.length === allMessages.length && !agregados.length) return; // nada cambio
+  if (agregados.length) msgs.sort((a, b) => parseTS(a.created_at) - parseTS(b.created_at));
+  allMessages = msgs;
+  allConvos = groupByConversations(allMessages);
 }
 
 // ============================================
@@ -2125,21 +2182,24 @@ function renderChart() {
   const dataUser = [];
   const dataBot = [];
 
+  // Conteo por dia (fecha local YYYY-MM-DD) en una sola pasada. Antes se recorrian todos los mensajes
+  // 28 veces (14 dias x 2 roles) y era lo mas lento de cada redibujo.
+  const porDia = {};
+  allMessages.forEach(m => {
+    const md = parseTS(m.created_at);
+    const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
+    const dia = porDia[mds] || (porDia[mds] = { user: 0, assistant: 0 });
+    if (m.role === 'user') dia.user++;
+    else if (m.role === 'assistant') dia.assistant++;
+  });
+
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 24 * 3600 * 1000);
     // Fecha local YYYY-MM-DD
     const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     labels.push(d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' }));
-    dataUser.push(allMessages.filter(m => {
-      const md = parseTS(m.created_at);
-      const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
-      return mds === ds && m.role === 'user';
-    }).length);
-    dataBot.push(allMessages.filter(m => {
-      const md = parseTS(m.created_at);
-      const mds = `${md.getFullYear()}-${String(md.getMonth()+1).padStart(2,'0')}-${String(md.getDate()).padStart(2,'0')}`;
-      return mds === ds && m.role === 'assistant';
-    }).length);
+    dataUser.push(porDia[ds] ? porDia[ds].user : 0);
+    dataBot.push(porDia[ds] ? porDia[ds].assistant : 0);
   }
 
   if (chartInstance) chartInstance.destroy();
